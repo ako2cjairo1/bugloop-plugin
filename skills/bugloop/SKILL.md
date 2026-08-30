@@ -25,7 +25,7 @@ in `<target>`. Fill the missing fields it names, then gate again.
 # Resolve the engine script regardless of install method (plugin cache path
 # varies by version; user-level install is fixed). The plugin's SessionStart
 # hook keeps .engine_root fresh automatically — this just reads it back.
-BL="$(cat ~/.claude/bugloop/.engine_root 2>/dev/null)/scripts/bugloop.sh"
+BL="$(cat ~/.claude/bugloop/.engine_root 2>/dev/null)/skills/bugloop/scripts/bugloop.sh"
 [ -x "$BL" ] || BL=~/.claude/skills/bugloop/scripts/bugloop.sh
 export PROJECT_DIR="$(pwd)"   # or the actual project root
 ```

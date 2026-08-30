@@ -4,7 +4,7 @@ description: Show the active BugLoop ledger and its current state
 
 Run:
 ```bash
-BL="$(cat ~/.claude/bugloop/.engine_root 2>/dev/null)/scripts/bugloop.sh"
+BL="$(cat ~/.claude/bugloop/.engine_root 2>/dev/null)/skills/bugloop/scripts/bugloop.sh"
 [ -x "$BL" ] || BL=~/.claude/skills/bugloop/scripts/bugloop.sh
 export PROJECT_DIR="$(pwd)"
 bash "$BL" list

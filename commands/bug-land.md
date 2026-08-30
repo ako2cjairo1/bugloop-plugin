@@ -7,7 +7,7 @@ with a `review.verdict` already set.
 
 1. Resolve the engine script and project dir:
    ```bash
-   BL="$(cat ~/.claude/bugloop/.engine_root 2>/dev/null)/scripts/bugloop.sh"
+   BL="$(cat ~/.claude/bugloop/.engine_root 2>/dev/null)/skills/bugloop/scripts/bugloop.sh"
    [ -x "$BL" ] || BL=~/.claude/skills/bugloop/scripts/bugloop.sh
    export PROJECT_DIR="$(pwd)"
    ```
