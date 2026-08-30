@@ -1,0 +1,31 @@
+{
+  "name": "bugloop",
+  "description": "Deterministic bug-fixing workflow: a disk-ledger state machine (TRIAGE→REPRO→LOCATE→HYPOTHESIZE→PATCH→VERIFY→REVIEW→LANDED) with hard gates per transition, baseline-diffed verification, and a write-tool-free verifier agent. Survives /clear.",
+  "author": {
+    "name": "ako2cjairo"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/skills/bugloop/scripts/bugloop.sh\" resume",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/skills/bugloop/scripts/bugloop.sh\" nag",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

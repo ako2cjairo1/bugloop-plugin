@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "bugloop",
+  "description": "Deterministic bug-fixing workflow for Claude Code — ledger-backed state machine with hard verification gates.",
+  "owner": {
+    "name": "ako2cjairo"
+  },
+  "plugins": [
+    {
+      "name": "bugloop",
+      "description": "Ledger-backed bug-fixing state machine with hard gates, baseline-diffed verification, and a write-tool-free verifier agent.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

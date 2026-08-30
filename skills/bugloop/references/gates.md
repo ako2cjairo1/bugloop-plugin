@@ -1,0 +1,35 @@
+# Gate reference
+
+Each row: the target state you're trying to enter, the command to check it,
+and the exact ledger fields that must be non-empty. Run the gate command —
+don't eyeball the ledger and decide it "looks done."
+
+| Target | Command | Required fields | Notes |
+|---|---|---|---|
+| REPRO | `bugloop.sh gate REPRO` | `state` (ledger exists) | Sanity check only — real work starts here |
+| LOCATE | `bugloop.sh gate LOCATE` | `repro.test_cmd`, `repro.failing_output`, `baseline.captured_at` | Baseline must exist BEFORE any source edit |
+| HYPOTHESIZE | `bugloop.sh gate HYPOTHESIZE` | `locate.sites` (or `state=UNREPRODUCED`) | UNREPRODUCED skips straight to instrumentation, not a fix |
+| PATCH | `bugloop.sh gate PATCH` | exactly one `- [n] status=testing` line, plus everything LOCATE required | More than one `testing` hypothesis at once = fail the gate |
+| VERIFY | `bugloop.sh gate VERIFY` | `patch.files_changed` | |
+| REVIEW | `bugloop.sh gate REVIEW` | `verify.focused=PASS`, `verify.baseline_diff=CLEAN` | Any other value blocks — no partial credit |
+| LANDED | `bugloop.sh gate LANDED` | `review.verdict` | Run `/bug-land` for the final full-suite receipt + commit |
+
+## Reading gate output
+
+```
+GATE FAIL -> PATCH
+missing: exactly-one hypothesis[status=testing] required (found 0)
+missing: repro.test_cmd repro.failing_output baseline.captured_at
+```
+
+Exit code is 1 on FAIL, 0 on PASS — safe to use in scripts or as a stop
+condition. Fill exactly the named fields with `bugloop.sh set <field>
+<value>`, then re-run the same gate.
+
+## Why gates exist instead of trusting the model's judgement
+
+Every field a gate checks corresponds to a claim that must be independently
+falsifiable: a test command that actually runs, output that was actually
+captured, a baseline that was actually measured before edits. A model
+narrating "I've reproduced it and verified the fix" without these fields
+existing on disk is exactly the failure mode this skill exists to prevent.
