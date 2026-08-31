@@ -19,6 +19,57 @@ NO "VERIFIED" CLAIM WITHOUT A RECEIPT IN THE LEDGER.
 If `bugloop.sh gate <target>` prints `GATE FAIL`, you cannot act as if you were
 in `<target>`. Fill the missing fields it names, then gate again.
 
+## Orchestrator judgment — gates check presence, not sense
+
+The Iron Law stops you from skipping evidence. It does not stop you from
+accepting bad evidence that happens to fill a field —
+`bugloop.sh set repro.failing_output "x"` satisfies a gate; it doesn't mean
+anything. Closing that gap is yours, every phase, before you call `set`:
+
+| Phase | Ask before accepting | If no, or you're not sure |
+|---|---|---|
+| REPRO | Does `failing_output` actually describe the reported symptom — not a different failure that happened to occur? | Don't set the field. Re-run repro, or ask the user to clarify what they observed. |
+| LOCATE | Do the sites plausibly relate to the symptom, or is this a shotgun grep hit? | Narrow the search. If it's genuinely unclear which code owns this, say so and ask rather than guessing. |
+| HYPOTHESIZE | Does the falsifier describe something that could actually disprove the hypothesis, or did I write one that can't fail? | Rewrite it. A hypothesis with no real falsifier is a guess wearing the format. |
+| PATCH | Does the diff match the hypothesis and stay inside LOCATE's blast radius, or did the change spread past what was named? | Stop before VERIFY. Report the mismatch to the user — scope drift here is exactly what this loop exists to catch. |
+| VERIFY | Does `baseline_diff=CLEAN` reflect a real diff against `baseline.txt`, or does the verifier's report look thin/asserted rather than shown? | Ask bug-verifier for the literal output. Never accept PASS on the agent's word — that's the entire point of a verifier with no write tools. |
+| REVIEW | Would a human actually sign off on this, or is `review.verdict` just the word "approved" with nothing behind it? | Push back on the reviewer agent; require real substance before setting the field. |
+
+**Read the full ledger before acting in any state** — not just the field(s)
+the next gate checks. Prior refuted hypotheses, prior receipts, and prior
+concerns are context for the current step, not history to skip past. This
+matters most right after `/clear` or a resumed session: the SessionStart
+summary shows a few lines, not the whole file — Read the ledger for real
+before continuing.
+
+When a concern survives that self-check, log it so it persists like
+everything else:
+```bash
+bash "$BL" receipt "echo 'CONCERN: <what looked wrong, specifically>'"
+```
+Then either resolve it inside the current state with more evidence — never
+by guessing — or ask the user directly, citing what's uncertain. Same
+standard as `NOT_A_BUG`: uncertainty gets surfaced, never quietly patched
+over to keep the loop moving.
+
+## Where the human gets asked
+
+Every human-in-the-loop point here is a named, citable moment — never a
+vague "check with the user sometime":
+
+| Trigger | What's asked | Where |
+|---|---|---|
+| `POSSIBLE_NOT_A_BUG` from the reproducer | The citation + "outdated, or expected behavior?" | REPRO, before any test is written |
+| An orchestrator-judgment concern (table above) that can't be resolved with more evidence | The specific thing that looks wrong, cited | Any state |
+| `UNREPRODUCED` after 3 attempts | Whether to proceed on a guess anyway (discouraged), or wait for more evidence | REPRO |
+| 3 hypotheses refuted → `ARCHITECTURE_QUESTION` | The three refuted hypotheses + what pattern they suggest | HYPOTHESIZE/VERIFY loop |
+| `BLOCKED_NEEDS_HUMAN` | Whatever's actually blocking (credentials, a change outside agent permission) | Any state |
+| `/bug-land` | Whether to commit | LANDED |
+
+If a state seems to need a check-in that isn't on this list, that's a sign
+the orchestrator-judgment table above should have caught it earlier — fix
+the earlier phase, don't bolt on a rubber-stamp question here.
+
 ## Setup (once per message that touches a bug)
 
 ```bash
@@ -169,8 +220,14 @@ Use `/bug-land` — full suite receipt, then commit if the user wants it. This
 is a terminal state; the Stop hook goes quiet once here.
 
 ## Model tiering
-LOCATE and REPRO and VERIFY are mechanical — run their agents on `haiku`.
-HYPOTHESIZE and PATCH need real reasoning — stay on the main model.
+LOCATE (`cavecrew-investigator`) and VERIFY (`bug-verifier`) are pure
+mechanical work — grep/read, run a command and diff its output, no judgment
+involved — run them on `haiku`. REPRO (`bug-reproducer`) runs on `sonnet`:
+writing a test that fails for the *right* reason, and telling a real bug
+apart from an existing-test contradiction, both take real reasoning — a bad
+haiku-written repro costs more in retries than the tier saved. HYPOTHESIZE
+and PATCH need the most reasoning of all — those stay on the main session
+model, not a subagent tier.
 
 ## Reuse — don't reinvent
 - LOCATE → `caveman:cavecrew-investigator`

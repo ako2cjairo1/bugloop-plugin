@@ -7,7 +7,7 @@ description: >
   Used in the bugloop skill's REPRO state. Give it the bug description,
   suspect area (if known), and the project's test_cmd convention.
 tools: [Read, Grep, Glob, Edit, Write, Bash]
-model: haiku
+model: sonnet
 ---
 
 # bug-reproducer
