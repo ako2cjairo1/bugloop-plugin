@@ -22,6 +22,10 @@ state: TRIAGE                      # TRIAGE|REPRO|LOCATE|HYPOTHESIZE|PATCH|
 project_dir: /abs/path
 created_at: <ISO 8601 UTC>
 test_cmd: <auto-detected or UNKNOWN>
+engine_version: <CLAUDE_PLUGIN_ROOT's cache-dir basename, or manual-install>
+                                    # which engine build handled this bug —
+                                    # stamped once at init, see gates.md note
+                                    # on why this exists
 
 ## repro
 repro.test_path:                   # path to the failing test file
@@ -38,7 +42,11 @@ locate.sites:                      # "path:line, path:line, ..." — defs + call
 
 ## hypotheses
 - [1] status=testing :: <cause statement> :: <evidence> :: <falsifier>
-<!-- one line per hypothesis; refuted ones stay, marked status=refuted -->
+<!-- Written by `bugloop.sh hypothesis add/refute/confirm` — never hand-edit
+these lines. The engine owns this exact format because `gate PATCH` counts
+them by regex; a hand-authored line that varies even slightly (spacing,
+field order) between runs silently breaks that count. Refuted ones stay,
+marked status=refuted, as the record of what not to try again. -->
 
 ## patch
 patch.files_changed:               # comma-separated paths actually edited
@@ -61,8 +69,13 @@ review.verdict:                    # from cavecrew-reviewer or main thread
 
 ## Rules for editing the ledger directly
 
-- The `## hypotheses` and `## receipts` sections are free-form append —
-  edit them with the Edit tool, not `bugloop.sh set`.
+- `## hypotheses` — engine-owned. Use `bugloop.sh hypothesis add/refute/confirm`,
+  never the Edit tool. This is the one section where hand-editing defeats
+  the point: `gate PATCH` parses these lines by regex, and only the engine
+  writing its own exact format guarantees that parse stays reliable run to
+  run.
+- `## receipts` — free-form append, via `bugloop.sh receipt "<cmd>"` only
+  (not Edit) — it needs the real command output, not a paraphrase.
 - Every other field is single-line — use `bugloop.sh set <field> "<value>"`,
   which does an atomic write (temp file + mv), so a crash mid-write never
   corrupts the ledger.

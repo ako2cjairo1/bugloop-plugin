@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bugloop.sh — state engine for the BugLoop workflow
-# Subcommands: init state set receipt baseline gate resume nag list
+# Subcommands: init state set receipt baseline hypothesis gate resume nag list
 set -euo pipefail
 
 ROOT="${BUGLOOP_ROOT:-$HOME/.claude/bugloop}"
@@ -111,13 +111,22 @@ cmd_init() {
     exit 2
   fi
   mkdir_proj
-  local id ledger test_cmd
+  local id ledger test_cmd engine_version
   id="$(slug_id "$desc")"
   ledger="$PROJ_DIR/${id}.md"
   if [ -f "$ledger" ]; then
     ledger="$PROJ_DIR/${id}-$(date +%H%M%S).md"
   fi
   test_cmd="$(detect_test_cmd)"
+  # Records which engine build handled this bug. CLAUDE_PLUGIN_ROOT's cache
+  # path is named by commit sha, so its basename doubles as a version stamp
+  # -- makes the .engine_root staleness issue (a mid-session plugin update
+  # not taking effect until restart) auditable instead of silent.
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    engine_version="$(basename "$CLAUDE_PLUGIN_ROOT")"
+  else
+    engine_version="manual-install"
+  fi
 
   cat > "$ledger" <<EOF
 # Bug: $desc
@@ -126,6 +135,7 @@ state: TRIAGE
 project_dir: ${PROJECT_DIR:-$PWD}
 created_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 test_cmd: ${test_cmd:-UNKNOWN}
+engine_version: ${engine_version}
 
 ## repro
 repro.test_path:
@@ -189,6 +199,7 @@ cmd_set() {
   local field="$1" value="$2"
   local ledger
   ledger="$(require_active)"
+  reject_multiline "$field value" "$value"
   local tmp
   tmp="$(mktemp)"
   if grep -qE "^${field}:" "$ledger"; then
@@ -253,6 +264,106 @@ cmd_baseline() {
   echo "bugloop: baseline captured -> $baseline_file"
 }
 
+# Everything below scopes to the '## hypotheses' section only, never the
+# whole file -- a receipt block verbatim-embeds command/test output, which
+# can easily contain a line that looks like "- [12] ..." (a numbered list,
+# a checklist) with nothing to do with an actual hypothesis. Scanning the
+# whole ledger for that shape desyncs numbering from what a human expects.
+hypotheses_section() {
+  local ledger="$1"
+  awk '
+    /^## / { inhyp = ($0 == "## hypotheses"); next }
+    inhyp { print }
+  ' "$ledger"
+}
+
+count_testing_hypotheses() {
+  local ledger="$1"
+  hypotheses_section "$ledger" | grep -cE '^- \[[0-9]+\] status=testing' || true
+}
+
+# A field value containing a literal newline breaks the awk -v assignments
+# below (crashes with a raw, non-'bugloop:'-prefixed error) -- reject it up
+# front with a clear message instead of letting awk fail opaquely.
+reject_multiline() {
+  local label="$1"; shift
+  local v
+  for v in "$@"; do
+    case "$v" in
+      *$'\n'*)
+        echo "bugloop: $label must be single-line (no embedded newlines) -- ledger fields are one line each" >&2
+        exit 2
+        ;;
+    esac
+  done
+}
+
+cmd_hypothesis() {
+  local sub="${1:-}"
+  shift || true
+  local ledger
+  ledger="$(require_active)"
+  case "$sub" in
+    add)
+      local statement="${1:-}" evidence="${2:-}" falsifier="${3:-}"
+      if [ -z "$statement" ] || [ -z "$evidence" ] || [ -z "$falsifier" ]; then
+        echo "usage: bugloop.sh hypothesis add \"<statement>\" \"<evidence>\" \"<falsifier>\"" >&2
+        exit 2
+      fi
+      reject_multiline "hypothesis statement/evidence/falsifier" "$statement" "$evidence" "$falsifier"
+      local testing_count
+      testing_count="$(count_testing_hypotheses "$ledger")"
+      if [ "$testing_count" -ge 1 ]; then
+        echo "bugloop: refuse -- a hypothesis is already status=testing. Refute or confirm it first (hypothesis refute/confirm <n>)." >&2
+        exit 1
+      fi
+      local maxn
+      maxn="$(hypotheses_section "$ledger" | grep -oE '^- \[[0-9]+\]' | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
+      [ -z "$maxn" ] && maxn=0
+      local n=$((maxn + 1))
+      local line="- [$n] status=testing :: $statement :: $evidence :: $falsifier"
+      local tmp
+      tmp="$(mktemp)"
+      awk -v newline="$line" '
+        !inserted && /^## patch$/ { print newline; print ""; inserted=1 }
+        { print }
+      ' "$ledger" > "$tmp"
+      mv "$tmp" "$ledger"
+      echo "bugloop: hypothesis $n added (status=testing)"
+      ;;
+    refute|confirm)
+      local n="${1:-}"
+      if [ -z "$n" ]; then
+        echo "usage: bugloop.sh hypothesis $sub <n>" >&2
+        exit 2
+      fi
+      local newstatus
+      if [ "$sub" = "refute" ]; then newstatus="refuted"; else newstatus="confirmed"; fi
+      if ! hypotheses_section "$ledger" | grep -qE "^- \\[$n\\] status="; then
+        echo "bugloop: no hypothesis [$n] found" >&2
+        exit 1
+      fi
+      local tmp
+      tmp="$(mktemp)"
+      awk -v n="$n" -v ns="$newstatus" '
+        /^## / { inhyp = ($0 == "## hypotheses"); print; next }
+        {
+          if (inhyp && $0 ~ ("^- \\[" n "\\] status=")) {
+            sub(/status=[a-zA-Z]+/, "status=" ns)
+          }
+          print
+        }
+      ' "$ledger" > "$tmp"
+      mv "$tmp" "$ledger"
+      echo "bugloop: hypothesis $n -> status=$newstatus"
+      ;;
+    *)
+      echo "usage: bugloop.sh hypothesis add|refute|confirm ..." >&2
+      exit 2
+      ;;
+  esac
+}
+
 gate_missing() {
   local ledger="$1"; shift
   local missing=()
@@ -302,7 +413,7 @@ cmd_gate() {
       ;;
     PATCH)
       local testing_count
-      testing_count="$(grep -cE '^- \[.*status=testing' "$ledger" || true)"
+      testing_count="$(count_testing_hypotheses "$ledger")"
       if [ "$testing_count" -ne 1 ]; then
         problems+=("exactly-one hypothesis[status=testing] required (found $testing_count)")
       fi
@@ -388,6 +499,7 @@ main() {
     set) cmd_set "$@" ;;
     receipt) cmd_receipt "$@" ;;
     baseline) cmd_baseline "$@" ;;
+    hypothesis) cmd_hypothesis "$@" ;;
     gate) cmd_gate "$@" ;;
     resume) cmd_resume "$@" ;;
     nag) cmd_nag "$@" ;;
@@ -400,6 +512,8 @@ usage: bugloop.sh <subcommand> [args]
   set <field> <value>     write a field
   receipt "<cmd>"         run cmd, append receipt (stdout+exit) to ledger
   baseline                run test_cmd, capture full-suite baseline
+  hypothesis add "<s>" "<e>" "<f>"   add a testing hypothesis (refuses if one is already testing)
+  hypothesis refute|confirm <n>      flip a hypothesis's status
   gate <target-state>     check required fields before transition
   resume                  print open-ledger summary (SessionStart hook)
   nag                     warn if ledger open and not terminal (Stop hook)

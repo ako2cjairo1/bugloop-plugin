@@ -164,13 +164,21 @@ bash "$BL" set locate.sites "path:line, path:line, ..."
 ```
 
 ### HYPOTHESIZE — one falsifiable claim
-Write exactly one hypothesis line directly into the ledger (Edit tool, under
-`## hypotheses`):
+```bash
+bash "$BL" hypothesis add "<cause statement>" "<evidence citing repro/locate>" "<falsifier — what would disprove this>"
 ```
-- [1] status=testing :: <cause statement> :: <evidence citing repro/locate> :: <falsifier — what would disprove this>
+The engine writes the line itself (exact format, auto-numbered) — don't
+hand-author it with Edit. This is deliberate: a hand-formatted line that
+varies slightly between runs is exactly the kind of drift that made the old
+gate count unreliable. `hypothesis add` also refuses outright if a
+`status=testing` hypothesis already exists, so "one at a time" is enforced,
+not just requested.
+
+If a previous hypothesis was refuted, its line stays with `status=refuted`
+— that's the record of what NOT to try again — via:
+```bash
+bash "$BL" hypothesis refute <n>
 ```
-One at a time. Not three. If a previous hypothesis was refuted, its line
-stays with `status=refuted` — that's the record of what NOT to try again.
 
 ```bash
 bash "$BL" gate PATCH
@@ -198,9 +206,9 @@ bash "$BL" set verify.focused "PASS"        # or FAIL
 bash "$BL" set verify.baseline_diff "CLEAN" # or the new failures found
 ```
 
-FAIL → mark the current hypothesis `status=refuted` in the ledger, go back to
-HYPOTHESIZE with the failure as new evidence. **Do not patch again on top of
-a refuted hypothesis.** After 3 refuted hypotheses:
+FAIL → `bash "$BL" hypothesis refute <n>`, go back to HYPOTHESIZE with the
+failure as new evidence. **Do not patch again on top of a refuted
+hypothesis.** After 3 refuted hypotheses:
 `bash "$BL" set state ARCHITECTURE_QUESTION` and stop — ask the user. Do not
 attempt a 4th guess.
 
