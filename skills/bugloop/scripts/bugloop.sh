@@ -165,6 +165,10 @@ verify.baseline_diff:
 ## review
 review.verdict:
 
+## landed
+landed.committed:
+landed.commit_sha:
+
 ## receipts
 <!-- appended by 'receipt' subcommand -->
 EOF
@@ -178,11 +182,22 @@ EOF
   return 0
 }
 
+# Escapes ERE metacharacters in a field name before it's used to build an
+# awk/grep regex. Field names today are all [a-z_.] -- only '.' is a live
+# metachar -- but an unescaped '.' matches any character, so "repro.test_cmd"
+# would also match a hypothetical "reproXtest_cmd" line. Closing this on
+# principle before a new field name ever collides under the wildcard.
+re_escape() {
+  printf '%s' "$1" | sed 's/[.[\*^$/]/\\&/g'
+}
+
 get_field() {
   local ledger="$1" field="$2"
-  awk -v f="$field:" '
-    $0 ~ "^"f" " || $0 == f {
-      sub("^"f" *", "");
+  local fe
+  fe="$(re_escape "$field")"
+  awk -v f="$field:" -v fe="${fe}:" '
+    $0 ~ "^"fe" " || $0 == f {
+      sub("^"fe" *", "");
       print;
       exit
     }
@@ -200,12 +215,13 @@ cmd_set() {
   local ledger
   ledger="$(require_active)"
   reject_multiline "$field value" "$value"
-  local tmp
+  local tmp fe
   tmp="$(mktemp)"
-  if grep -qE "^${field}:" "$ledger"; then
-    awk -v f="$field" -v v="$value" '
+  fe="$(re_escape "$field")"
+  if grep -qE "^${fe}:" "$ledger"; then
+    awk -v f="$field" -v fe="$fe" -v v="$value" '
       BEGIN{done=0}
-      $0 ~ "^"f":" && done==0 { print f": " v; done=1; next }
+      $0 ~ "^"fe":" && done==0 { print f": " v; done=1; next }
       { print }
     ' "$ledger" > "$tmp"
   else
@@ -228,13 +244,25 @@ cmd_receipt() {
   out="$(cd "$dir" && eval "$runcmd" 2>&1)"
   ec=$?
   set -e
-  local tail_out
-  tail_out="$(printf '%s' "$out" | tail -n 40)"
+  # On a verbose suite, the actual failing assertion can scroll past a blind
+  # tail -40, leaving the ledger's permanent record -- the one thing that
+  # survives /clear -- without the detail that matters. Prefer lines that
+  # look like a failure, with context; fall back to tail -40 on a clean run
+  # (nothing to prefer) or exotic output with no recognizable failure marker.
+  local excerpt
+  # tail, not head: the definitive failure (assertion, root cause, final
+  # summary) is almost always the LAST match in verbose output -- a run
+  # with 200 benign "0 errors, 0 failures" lines and one real failure at
+  # the end must keep the end, not the earliest matches.
+  excerpt="$(printf '%s' "$out" | grep -inE -B3 -A3 'fail|error|✗|panic' 2>/dev/null | tail -n 60 || true)"
+  if [ -z "$excerpt" ]; then
+    excerpt="$(printf '%s' "$out" | tail -n 40)"
+  fi
   {
     echo ""
     echo "### $(date -u +%Y-%m-%dT%H:%M:%SZ) — \`$runcmd\` — exit $ec"
     echo '```'
-    echo "$tail_out"
+    echo "$excerpt"
     echo '```'
   } >> "$ledger"
   echo "$out"

@@ -12,7 +12,7 @@ don't eyeball the ledger and decide it "looks done."
 | PATCH | `bugloop.sh gate PATCH` | exactly one `- [n] status=testing` line, plus everything LOCATE required | Written by `bugloop.sh hypothesis add` (never hand-edited) so the count this gate relies on can't drift with phrasing |
 | VERIFY | `bugloop.sh gate VERIFY` | `patch.files_changed` | |
 | REVIEW | `bugloop.sh gate REVIEW` | `verify.focused=PASS`, `verify.baseline_diff=CLEAN` | Any other value blocks — no partial credit |
-| LANDED | `bugloop.sh gate LANDED` | `review.verdict` | Run `/bug-land` for the final full-suite receipt + commit |
+| LANDED | `bugloop.sh gate LANDED` | `review.verdict` | Run `/bug-land` for the final full-suite receipt + commit. It also records `landed.committed`/`landed.commit_sha` — the gate itself doesn't require them, but a LANDED ledger without them means the fix may still be sitting uncommitted |
 
 ## Reading gate output
 

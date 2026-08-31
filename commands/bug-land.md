@@ -28,6 +28,15 @@ with a `review.verdict` already set.
    `patch.files_changed` (plus the failing test added in REPRO) and write a
    commit message describing the root cause fixed, not just the symptom.
    Reference the ledger path in the commit body if useful for future lookup.
+
+   **Record what actually happened** — a ledger that says `LANDED` doesn't
+   by itself say whether the fix made it into repo history or is sitting as
+   an uncommitted diff, and that distinction matters the next time this
+   ledger is read:
+   ```bash
+   bash "$BL" set landed.committed "yes"          # or "no" if declined
+   bash "$BL" set landed.commit_sha "<git rev-parse HEAD, if committed>"
+   ```
 6. Report completion plainly: what was fixed, root cause, what the receipt
-   showed. Do not claim success without having just run step 3's receipt in
-   this turn.
+   showed, and whether it was committed. Do not claim success without having
+   just run step 3's receipt in this turn.

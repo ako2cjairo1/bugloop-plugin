@@ -2,10 +2,12 @@
 
 Deterministic bug-fixing workflow for Claude Code. A disk ledger — not the
 conversation — is the source of truth for a state machine
-(`TRIAGE → REPRO → LOCATE → HYPOTHESIZE → PATCH → VERIFY → REVIEW → LANDED`),
-with a hard gate checked before every transition, a pre-fix baseline that
-VERIFY diffs against, and a verifier agent with no Edit/Write tools so it
-cannot "fix" a test to make it pass.
+(`TRIAGE → REPRO → LOCATE → HYPOTHESIZE → PATCH → VERIFY → REVIEW → LANDED`,
+with `NOT_A_BUG` / `UNREPRODUCED` / `FLAKY` / `ARCHITECTURE_QUESTION` /
+`BLOCKED_NEEDS_HUMAN` as named exit branches — never a silent guess), with a
+hard gate checked before every transition, a pre-fix baseline that VERIFY
+diffs against, and a verifier agent with no Edit/Write tools so it cannot
+"fix" a test to make it pass.
 
 Survives `/clear` — a SessionStart hook prints a summary of any open ledger
 so the loop resumes instead of restarting.

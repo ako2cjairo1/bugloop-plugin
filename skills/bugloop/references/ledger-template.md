@@ -58,6 +58,11 @@ verify.baseline_diff: CLEAN|<description of new failures>
 ## review
 review.verdict:                    # from cavecrew-reviewer or main thread
 
+## landed
+landed.committed:                  # yes|no -- set by /bug-land, records what the user chose
+landed.commit_sha:                 # if committed -- so LANDED means something specific,
+                                    # not just "the ledger reached a terminal state"
+
 ## receipts
 <!-- `bugloop.sh receipt "<cmd>"` appends a timestamped block here:
 ### <ISO timestamp> — `<cmd>` — exit <code>
