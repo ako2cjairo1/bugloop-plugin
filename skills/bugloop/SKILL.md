@@ -63,6 +63,28 @@ Delegate to the **bug-reproducer** agent (or do it directly for trivial
 cases): write the smallest test that fails for the reported reason, capture
 the literal failing output.
 
+**The agent checks for contradicting evidence before writing anything** — a
+false failing test poisons every gate downstream, which trusts it
+unconditionally. Three outcomes come back:
+
+- **Reproduced** (the common case) — fill the fields below and continue.
+- **`POSSIBLE_NOT_A_BUG`** — the agent found an existing test, doc, or
+  comment that asserts today's behavior is intentional, contradicting the
+  report. Ask the user once, citing the exact evidence: *"`<file:line>`
+  asserts `<what it says>` — is that outdated, or is your report describing
+  expected behavior?"* Don't decide this yourself, and don't skip asking
+  just because the evidence looks strong.
+  - User says it's still a bug → proceed to a normal repro, note the
+    citation in the ledger under `## repro` (it may matter for PATCH), and
+    continue.
+  - User confirms it's expected → `bash "$BL" set state NOT_A_BUG`, then
+    see `references/failure-modes.md` → `NOT_A_BUG` and stop. No LOCATE,
+    no PATCH.
+- **`UNREPRODUCED`** — 3 distinct attempts (different inputs/angles) never
+  trigger the symptom. See `references/failure-modes.md` → `UNREPRODUCED`.
+  Do not guess a fix for a bug you cannot trigger.
+
+If reproduced, fill the ledger:
 ```bash
 bash "$BL" set repro.test_path "<path>"
 bash "$BL" set repro.test_cmd "<cmd that runs just this test>"
@@ -75,10 +97,6 @@ bash "$BL" baseline
 ```
 This runs the full suite once and records what already fails — VERIFY later
 diffs against this, not against an idealized "everything green."
-
-If repro fails after 3 distinct attempts (different inputs/angles), see
-`references/failure-modes.md` → `UNREPRODUCED`. Do not guess a fix for a bug
-you cannot trigger.
 
 Gate before leaving this state:
 ```bash
@@ -163,5 +181,5 @@ HYPOTHESIZE and PATCH need real reasoning — stay on the main model.
 
 See `references/gates.md` for the exact field-by-field gate table,
 `references/ledger-template.md` for the ledger schema, and
-`references/failure-modes.md` for UNREPRODUCED / FLAKY / ARCHITECTURE_QUESTION
-branches.
+`references/failure-modes.md` for NOT_A_BUG / UNREPRODUCED / FLAKY /
+ARCHITECTURE_QUESTION branches.

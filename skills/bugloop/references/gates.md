@@ -6,9 +6,9 @@ don't eyeball the ledger and decide it "looks done."
 
 | Target | Command | Required fields | Notes |
 |---|---|---|---|
-| REPRO | `bugloop.sh gate REPRO` | `state` (ledger exists) | Sanity check only — real work starts here |
+| REPRO | `bugloop.sh gate REPRO` | `state` (ledger exists) | Sanity check only — real work starts here. May exit to `NOT_A_BUG` (user-confirmed) or `UNREPRODUCED` instead of proceeding |
 | LOCATE | `bugloop.sh gate LOCATE` | `repro.test_cmd`, `repro.failing_output`, `baseline.captured_at` | Baseline must exist BEFORE any source edit |
-| HYPOTHESIZE | `bugloop.sh gate HYPOTHESIZE` | `locate.sites` (or `state=UNREPRODUCED`) | UNREPRODUCED skips straight to instrumentation, not a fix |
+| HYPOTHESIZE | `bugloop.sh gate HYPOTHESIZE` | `locate.sites` (or `state=UNREPRODUCED`/`NOT_A_BUG`) | Either exit state skips straight past LOCATE — nothing to locate for a bug that isn't one, or one you can't trigger |
 | PATCH | `bugloop.sh gate PATCH` | exactly one `- [n] status=testing` line, plus everything LOCATE required | More than one `testing` hypothesis at once = fail the gate |
 | VERIFY | `bugloop.sh gate VERIFY` | `patch.files_changed` | |
 | REVIEW | `bugloop.sh gate REVIEW` | `verify.focused=PASS`, `verify.baseline_diff=CLEAN` | Any other value blocks — no partial credit |

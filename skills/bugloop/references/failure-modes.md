@@ -1,7 +1,39 @@
 # Failure-mode branches
 
-Three non-standard states. All three are explicit `state:` values that block
+Non-standard states. All of them are explicit `state:` values that block
 `PATCH` — none of them are something you route around by proceeding anyway.
+`NOT_A_BUG`, `ARCHITECTURE_QUESTION`, and `BLOCKED_NEEDS_HUMAN` are true
+terminal states (the ledger is done, the Stop hook goes quiet); `UNREPRODUCED`
+and `FLAKY` are resumable pauses (more evidence can reopen them).
+
+## NOT_A_BUG
+
+**Trigger:** during REPRO, `bug-reproducer` finds an existing test, doc, or
+comment that directly asserts today's behavior is intentional, contradicting
+the report (its `POSSIBLE_NOT_A_BUG` output) — **and** the user, asked once
+with that citation, confirms it's expected rather than outdated.
+
+**Never set this from the agent's report alone.** `POSSIBLE_NOT_A_BUG` is a
+citation to put in front of the user, not a verdict. Ask, citing the exact
+evidence:
+> `<file:line>` asserts `<what it says>` — is that outdated, or is your
+> report describing expected behavior?
+
+**Set (only after the user confirms):**
+```bash
+bash "$BL" set state NOT_A_BUG
+bash "$BL" set repro.not_a_bug_evidence "<file:line — what it asserts>"
+```
+
+Stop here. No LOCATE, no HYPOTHESIZE, no PATCH — there is nothing to fix.
+This is different from `UNREPRODUCED`: that's "couldn't trigger it,"
+this is "triggered it, and it's correct." Closing a report this way is a
+dismissive action if wrong, which is exactly why it needs the user's
+confirmation and never just the agent's word.
+
+If the user pushes back later ("no, really, it's a bug") — that's new
+information, not a contradiction to relitigate. Reopen: set state back to
+`TRIAGE` or `REPRO` and continue normally, this ledger, not a new one.
 
 ## UNREPRODUCED
 

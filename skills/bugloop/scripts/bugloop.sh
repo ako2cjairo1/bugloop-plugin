@@ -131,6 +131,7 @@ test_cmd: ${test_cmd:-UNKNOWN}
 repro.test_path:
 repro.test_cmd:
 repro.failing_output:
+repro.not_a_bug_evidence:
 
 ## baseline
 baseline.captured_at:
@@ -295,8 +296,8 @@ cmd_gate() {
     HYPOTHESIZE)
       local sites
       sites="$(get_field "$ledger" locate.sites)"
-      if [ -z "$sites" ] && ! grep -qiE '^state: *UNREPRODUCED' "$ledger" 2>/dev/null; then
-        problems+=("locate.sites (or state=UNREPRODUCED)")
+      if [ -z "$sites" ] && ! grep -qiE '^state: *(UNREPRODUCED|NOT_A_BUG)' "$ledger" 2>/dev/null; then
+        problems+=("locate.sites (or state=UNREPRODUCED/NOT_A_BUG)")
       fi
       ;;
     PATCH)
@@ -361,7 +362,7 @@ cmd_nag() {
   local state
   state="$(grep -m1 '^state:' "$ledger" | sed 's/^state: *//')"
   case "$state" in
-    LANDED|BLOCKED_NEEDS_HUMAN|ARCHITECTURE_QUESTION|"")
+    LANDED|NOT_A_BUG|BLOCKED_NEEDS_HUMAN|ARCHITECTURE_QUESTION|"")
       exit 0
       ;;
     *)

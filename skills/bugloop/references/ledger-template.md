@@ -15,8 +15,9 @@ engine does not parse them.
 # Bug: <one-line description>
 
 state: TRIAGE                      # TRIAGE|REPRO|LOCATE|HYPOTHESIZE|PATCH|
-                                    # VERIFY|REVIEW|LANDED|UNREPRODUCED|
-                                    # FLAKY|ARCHITECTURE_QUESTION|
+                                    # VERIFY|REVIEW|LANDED|NOT_A_BUG|
+                                    # UNREPRODUCED|FLAKY|
+                                    # ARCHITECTURE_QUESTION|
                                     # BLOCKED_NEEDS_HUMAN
 project_dir: /abs/path
 created_at: <ISO 8601 UTC>
@@ -26,6 +27,7 @@ test_cmd: <auto-detected or UNKNOWN>
 repro.test_path:                   # path to the failing test file
 repro.test_cmd:                    # command that runs just this test
 repro.failing_output:              # literal output, condensed to one line
+repro.not_a_bug_evidence:          # set only if NOT_A_BUG: file:line + what it asserts
 
 ## baseline
 baseline.captured_at:              # ISO timestamp — set by `bugloop.sh baseline`
