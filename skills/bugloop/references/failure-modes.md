@@ -6,6 +6,12 @@ Non-standard states. All of them are explicit `state:` values that block
 terminal states (the ledger is done, the Stop hook goes quiet); `UNREPRODUCED`
 and `FLAKY` are resumable pauses (more evidence can reopen them).
 
+Every branch below that asks the user something records it first:
+`bash "$BL" pending ask "<verbatim>" "<context>"` before asking,
+`bash "$BL" pending clear` after it's answered. This is what lets
+`resume`/the Stop hook re-surface an unanswered question verbatim instead of
+silently losing it across `/clear` or a dropped session.
+
 ## NOT_A_BUG
 
 **Trigger:** during REPRO, `bug-reproducer` finds an existing test, doc, or
@@ -14,13 +20,17 @@ the report (its `POSSIBLE_NOT_A_BUG` output) — **and** the user, asked once
 with that citation, confirms it's expected rather than outdated.
 
 **Never set this from the agent's report alone.** `POSSIBLE_NOT_A_BUG` is a
-citation to put in front of the user, not a verdict. Ask, citing the exact
-evidence:
+citation to put in front of the user, not a verdict. Record it, then ask,
+citing the exact evidence:
+```bash
+bash "$BL" pending ask "<file:line> asserts <what it says> -- outdated, or expected behavior?" "POSSIBLE_NOT_A_BUG"
+```
 > `<file:line>` asserts `<what it says>` — is that outdated, or is your
 > report describing expected behavior?
 
 **Set (only after the user confirms):**
 ```bash
+bash "$BL" pending clear
 bash "$BL" set state NOT_A_BUG
 bash "$BL" set repro.not_a_bug_evidence "<file:line — what it asserts>"
 ```
@@ -54,6 +64,9 @@ instrumentation mode:
 3. Once real evidence arrives, append it to the ledger under `## repro` and
    re-attempt REPRO — you're not starting a new ledger, this one continues.
 
+Before step 2's ask: `bash "$BL" pending ask "..." "UNREPRODUCED"`, cleared
+(`pending clear`) once the user responds — same as every other branch here.
+
 If the user says "just try something," that is not evidence — say plainly
 that a guess without repro risks a no-op patch, then proceed only under that
 explicit direction, and note the assumption in the ledger.
@@ -80,6 +93,7 @@ from noise.
 
 **Set:**
 ```bash
+bash "$BL" pending ask "3 hypotheses refuted: <summary of each + evidence>. What am I missing?" "ARCHITECTURE_QUESTION"
 bash "$BL" set state ARCHITECTURE_QUESTION
 ```
 
@@ -88,7 +102,8 @@ the same symptom is a signal the mental model of the system is wrong, not
 that the next guess will land. Summarize for the user:
 - the three refuted hypotheses and what evidence refuted each
 - what that pattern suggests about the actual architecture
-- ask directly, don't keep thrashing silently
+- ask directly, don't keep thrashing silently — then `pending clear` once
+  they've answered
 
 This mirrors `superpowers:systematic-debugging`'s "3+ fixes failed → question
 architecture" step, but anchored to the ledger's hypothesis count instead of
@@ -98,6 +113,7 @@ an ad-hoc mental tally.
 
 Catch-all terminal state for anything else that stops the loop cold: missing
 credentials, a decision only the user can make, a fix that requires touching
-code outside the agent's permission. Set it, explain why in the ledger under
+code outside the agent's permission. `pending ask` with what's actually
+blocking before setting the state, explain why in the ledger under
 `## review`, and stop — same as the other two terminal-adjacent states, the
 Stop hook goes quiet once here.

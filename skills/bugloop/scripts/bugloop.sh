@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # bugloop.sh — state engine for the BugLoop workflow
-# Subcommands: init state set receipt baseline hypothesis gate resume nag list
+# Subcommands: init state set receipt baseline hypothesis switch pending gate resume nag list
 set -euo pipefail
 
 ROOT="${BUGLOOP_ROOT:-$HOME/.claude/bugloop}"
+
+# Set via BUGLOOP_LEDGER env var or a --ledger <path> flag (stripped out of
+# argv in main()). When set, every mutating subcommand acts on this ledger
+# directly instead of resolving through active.json -- lets a second caller
+# (the dashboard, a script) address a specific in-flight bug without
+# disturbing what a concurrent terminal session's active ledger is.
+LEDGER_OVERRIDE="${BUGLOOP_LEDGER:-}"
 
 need_jq() {
   if ! command -v jq >/dev/null 2>&1; then
@@ -49,6 +56,14 @@ active_ledger_path() {
 }
 
 require_active() {
+  if [ -n "$LEDGER_OVERRIDE" ]; then
+    if [ ! -f "$LEDGER_OVERRIDE" ]; then
+      echo "bugloop: --ledger path not found: $LEDGER_OVERRIDE" >&2
+      exit 1
+    fi
+    echo "$LEDGER_OVERRIDE"
+    return 0
+  fi
   local lp
   lp="$(active_ledger_path)"
   if [ -z "$lp" ] || [ ! -f "$lp" ]; then
@@ -137,6 +152,11 @@ created_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 test_cmd: ${test_cmd:-UNKNOWN}
 engine_version: ${engine_version}
 
+## pending
+pending.question:
+pending.context:
+pending.asked_at:
+
 ## repro
 repro.test_path:
 repro.test_cmd:
@@ -164,6 +184,7 @@ verify.baseline_diff:
 
 ## review
 review.verdict:
+review.rejection_count:
 
 ## landed
 landed.committed:
@@ -281,7 +302,10 @@ cmd_baseline() {
     echo "bugloop: no test_cmd set. Run 'bugloop.sh set test_cmd \"<cmd>\"' first." >&2
     exit 1
   fi
-  local baseline_file="$PROJ_DIR/baseline.txt"
+  # Per-ledger, not per-project: with --ledger/switch letting two bugs be
+  # worked concurrently on one project, a shared $PROJ_DIR/baseline.txt
+  # would let one ledger's baseline run silently overwrite another's.
+  local baseline_file="${ledger%.md}.baseline.txt"
   set +e
   (cd "$dir" && eval "$tc") > "$baseline_file" 2>&1
   set -e
@@ -485,6 +509,11 @@ cmd_resume() {
   fi
   echo "bugloop: open ledger found — state=$state"
   echo "ledger: $ledger"
+  local pending
+  pending="$(get_field "$ledger" pending.question)"
+  if [ -n "$pending" ]; then
+    echo "UNANSWERED QUESTION: $pending"
+  fi
   echo "--- summary ---"
   sed -n '1,10p' "$ledger"
   echo "..."
@@ -505,7 +534,13 @@ cmd_nag() {
       exit 0
       ;;
     *)
-      echo "bugloop: ledger still open (state=$state) — $ledger"
+      local pending
+      pending="$(get_field "$ledger" pending.question)"
+      if [ -n "$pending" ]; then
+        echo "bugloop: unanswered question (state=$state) — $pending"
+      else
+        echo "bugloop: ledger still open (state=$state) — $ledger"
+      fi
       ;;
   esac
 }
@@ -518,7 +553,79 @@ cmd_list() {
   find "$ROOT" -name '*.md' -maxdepth 2 2>/dev/null
 }
 
+cmd_switch() {
+  local query="${1:-}"
+  if [ -z "$query" ]; then
+    echo "usage: bugloop.sh switch <id-or-partial-match>" >&2
+    exit 2
+  fi
+  mkdir_proj
+  local matches
+  matches="$(find "$PROJ_DIR" -maxdepth 1 -name "*${query}*.md" 2>/dev/null || true)"
+  local count
+  count="$(printf '%s\n' "$matches" | grep -c . || true)"
+  if [ "$count" -eq 0 ]; then
+    echo "bugloop: no ledger matching '$query' in $PROJ_DIR" >&2
+    exit 1
+  fi
+  if [ "$count" -gt 1 ]; then
+    echo "bugloop: ambiguous match for '$query' -- multiple ledgers:" >&2
+    printf '%s\n' "$matches" >&2
+    exit 1
+  fi
+  local ledger="$matches"
+  local id
+  id="$(basename "$ledger" .md)"
+  write_json "$ACTIVE_FILE" "$(jq -n --arg l "$ledger" --arg id "$id" '{ledger:$l, id:$id}')"
+  echo "bugloop: switched active ledger -> $ledger"
+}
+
+# Owns pending.question/pending.context/pending.asked_at as one atomic unit
+# -- same reasoning as the hypothesis subcommand family: three fields that
+# always change together are a bug waiting to happen as three separate
+# `set` calls a caller has to remember every time. Here specifically:
+# docs/prose asking for pending.question + pending.context but never
+# pending.asked_at is exactly the kind of drift this replaces.
+cmd_pending() {
+  local sub="${1:-}"
+  shift || true
+  case "$sub" in
+    ask)
+      local question="${1:-}" context="${2:-}"
+      if [ -z "$question" ]; then
+        echo "usage: bugloop.sh pending ask \"<question>\" \"<context>\"" >&2
+        exit 2
+      fi
+      # cmd_set independently rejects multiline values for each field below
+      cmd_set pending.question "$question" >/dev/null
+      cmd_set pending.context "$context" >/dev/null
+      cmd_set pending.asked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
+      echo "bugloop: pending question recorded"
+      ;;
+    clear)
+      cmd_set pending.question "" >/dev/null
+      cmd_set pending.context "" >/dev/null
+      cmd_set pending.asked_at "" >/dev/null
+      echo "bugloop: pending question cleared"
+      ;;
+    *)
+      echo "usage: bugloop.sh pending ask|clear ..." >&2
+      exit 2
+      ;;
+  esac
+}
+
 main() {
+  # Strip a LEADING --ledger <path> global flag, before the subcommand name
+  # only -- once a subcommand starts, its own arguments are never inspected
+  # or touched, so a hypothesis statement, pending.question text, etc. that
+  # happens to equal the literal string "--ledger" can't be misread as the
+  # flag.
+  while [ "$#" -gt 0 ] && [ "$1" = "--ledger" ]; do
+    LEDGER_OVERRIDE="${2:-}"
+    shift 2
+  done
+
   local sub="${1:-}"
   shift || true
   case "$sub" in
@@ -528,13 +635,15 @@ main() {
     receipt) cmd_receipt "$@" ;;
     baseline) cmd_baseline "$@" ;;
     hypothesis) cmd_hypothesis "$@" ;;
+    switch) cmd_switch "$@" ;;
+    pending) cmd_pending "$@" ;;
     gate) cmd_gate "$@" ;;
     resume) cmd_resume "$@" ;;
     nag) cmd_nag "$@" ;;
     list) cmd_list "$@" ;;
     *)
       cat >&2 <<USAGE
-usage: bugloop.sh <subcommand> [args]
+usage: bugloop.sh [--ledger <path>] <subcommand> [args]
   init "<desc>"          create new ledger, set active
   state                   print current state of active ledger
   set <field> <value>     write a field
@@ -542,10 +651,16 @@ usage: bugloop.sh <subcommand> [args]
   baseline                run test_cmd, capture full-suite baseline
   hypothesis add "<s>" "<e>" "<f>"   add a testing hypothesis (refuses if one is already testing)
   hypothesis refute|confirm <n>      flip a hypothesis's status
+  switch <id-or-partial-match>       repoint active.json at an existing ledger
+  pending ask "<question>" "<context>"   record a durable pending question (all 3 fields, atomically)
+  pending clear                          clear it after the answer lands
   gate <target-state>     check required fields before transition
   resume                  print open-ledger summary (SessionStart hook)
   nag                     warn if ledger open and not terminal (Stop hook)
   list                    list all ledgers
+
+  --ledger <path> (or BUGLOOP_LEDGER env var) targets any subcommand at a
+  specific ledger directly, without touching active.json.
 USAGE
       exit 2
       ;;

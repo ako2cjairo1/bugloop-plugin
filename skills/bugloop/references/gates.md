@@ -11,7 +11,7 @@ don't eyeball the ledger and decide it "looks done."
 | HYPOTHESIZE | `bugloop.sh gate HYPOTHESIZE` | `locate.sites` (or `state=UNREPRODUCED`/`NOT_A_BUG`) | Either exit state skips straight past LOCATE — nothing to locate for a bug that isn't one, or one you can't trigger |
 | PATCH | `bugloop.sh gate PATCH` | exactly one `- [n] status=testing` line, plus everything LOCATE required | Written by `bugloop.sh hypothesis add` (never hand-edited) so the count this gate relies on can't drift with phrasing |
 | VERIFY | `bugloop.sh gate VERIFY` | `patch.files_changed` | |
-| REVIEW | `bugloop.sh gate REVIEW` | `verify.focused=PASS`, `verify.baseline_diff=CLEAN` | Any other value blocks — no partial credit |
+| REVIEW | `bugloop.sh gate REVIEW` | `verify.focused=PASS`, `verify.baseline_diff=CLEAN` | Any other value blocks — no partial credit. REVIEW itself is bounded-adversarial: `review.rejection_count` caps at 2 before the reviewer must approve, approve-with-caveats, or escalate — see SKILL.md's REVIEW section |
 | LANDED | `bugloop.sh gate LANDED` | `review.verdict` | Run `/bug-land` for the final full-suite receipt + commit. It also records `landed.committed`/`landed.commit_sha` — the gate itself doesn't require them, but a LANDED ledger without them means the fix may still be sitting uncommitted |
 
 ## Reading gate output
@@ -33,6 +33,36 @@ falsifiable: a test command that actually runs, output that was actually
 captured, a baseline that was actually measured before edits. A model
 narrating "I've reproduced it and verified the fix" without these fields
 existing on disk is exactly the failure mode this skill exists to prevent.
+
+## Why pending.question is durable, not conversational
+
+Every human-in-the-loop point (`POSSIBLE_NOT_A_BUG`, `UNREPRODUCED`,
+`ARCHITECTURE_QUESTION`, `BLOCKED_NEEDS_HUMAN`, `/bug-land`'s commit ask,
+an orchestrator-judgment concern) records the question in the ledger
+*before* asking it — `bugloop.sh pending ask "<question>" "<context>"` sets
+`pending.question`/`pending.context`/`pending.asked_at` together, always all
+three — and `bugloop.sh pending clear` right after. A question asked only
+inside a conversation turn
+and never written to disk is a question the next session — after `/clear`,
+a crash, a dropped connection — has no way to know was ever pending; it
+might silently re-decide, ask something differently worded, or just stall.
+`bugloop.sh resume` (SessionStart) and `nag` (Stop) both surface a non-empty
+`pending.question` automatically, so the terminal UX gets this for free —
+this is also the entire query behind a dashboard's "needs your decision"
+view: every ledger where `pending.question` isn't empty.
+
+## Targeting a specific ledger
+
+`active.json` (per project) only ever points at one ledger. `--ledger
+<path>` — placed *before* the subcommand, e.g. `bugloop.sh --ledger
+<path> set field value` (or the `BUGLOOP_LEDGER` env var, either order) —
+acts on a different, specific ledger directly, without touching what's
+active — needed the
+moment more than one bug is in flight for the same project, or when
+something other than the driving terminal session (a dashboard) needs to
+act on a ledger. `bugloop.sh switch <id-or-partial-match>` repoints
+`active.json` itself, for when you want a different ledger to become the
+default target going forward.
 
 ## Why `engine_version` is stamped at init
 

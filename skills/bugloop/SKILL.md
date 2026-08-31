@@ -48,14 +48,29 @@ everything else:
 bash "$BL" receipt "echo 'CONCERN: <what looked wrong, specifically>'"
 ```
 Then either resolve it inside the current state with more evidence — never
-by guessing — or ask the user directly, citing what's uncertain. Same
-standard as `NOT_A_BUG`: uncertainty gets surfaced, never quietly patched
-over to keep the loop moving.
+by guessing — or `pending ask` (see below) and ask the user directly,
+citing what's uncertain. Same standard as `NOT_A_BUG`: uncertainty gets
+surfaced, never quietly patched over to keep the loop moving.
 
 ## Where the human gets asked
 
 Every human-in-the-loop point here is a named, citable moment — never a
-vague "check with the user sometime":
+vague "check with the user sometime". **Before asking any of these, record
+it — after, clear it:**
+```bash
+bash "$BL" pending ask "<verbatim question>" "<which trigger — POSSIBLE_NOT_A_BUG, etc.>"
+# ... ask, get the answer, act on it ...
+bash "$BL" pending clear
+```
+`pending ask` sets `pending.question`, `pending.context`, and
+`pending.asked_at` together, atomically — always all three, never just the
+first two by hand (a raw `set` call that forgets the timestamp is exactly
+the kind of drift this exists to prevent). This is what makes a question
+survive `/clear` or a dropped session — a question asked only in
+conversation and never recorded is a question the next session has no idea
+was ever pending. `resume` and the Stop hook both surface `pending.question`
+automatically once it's set; don't skip this even when you're confident the
+answer is coming in the same turn.
 
 | Trigger | What's asked | Where |
 |---|---|---|
@@ -93,6 +108,17 @@ with Read, pick up at its `state:` field. Do not `init` a second one for the
 same bug. (A SessionStart hook already prints a summary of any open ledger —
 if you see that at the top of this session, that's the one to resume.)
 
+**Working a second bug on the same project without disturbing the first**:
+`active.json` only ever points at one ledger per project. To act on a
+specific, non-active one directly — a second in-flight bug, or a ledger the
+dashboard has open — pass `--ledger <path>` (or set `BUGLOOP_LEDGER`) on
+any subcommand instead of `init`-ing over the active one:
+```bash
+bash "$BL" --ledger <path/to/other-ledger.md> set ...
+```
+To make a different existing ledger the active one for the rest of the
+session, `bash "$BL" switch <id-or-partial-match>`.
+
 ## States and what to do in each
 
 ### TRIAGE — start here
@@ -121,16 +147,20 @@ unconditionally. Three outcomes come back:
 - **Reproduced** (the common case) — fill the fields below and continue.
 - **`POSSIBLE_NOT_A_BUG`** — the agent found an existing test, doc, or
   comment that asserts today's behavior is intentional, contradicting the
-  report. Ask the user once, citing the exact evidence: *"`<file:line>`
-  asserts `<what it says>` — is that outdated, or is your report describing
-  expected behavior?"* Don't decide this yourself, and don't skip asking
-  just because the evidence looks strong.
-  - User says it's still a bug → proceed to a normal repro, note the
-    citation in the ledger under `## repro` (it may matter for PATCH), and
-    continue.
-  - User confirms it's expected → `bash "$BL" set state NOT_A_BUG`, then
-    see `references/failure-modes.md` → `NOT_A_BUG` and stop. No LOCATE,
-    no PATCH.
+  report. Record it, then ask the user once, citing the exact evidence:
+  ```bash
+  bash "$BL" pending ask "<file:line> asserts <what it says> -- is that outdated, or is your report describing expected behavior?" "POSSIBLE_NOT_A_BUG"
+  ```
+  *"`<file:line>` asserts `<what it says>` — is that outdated, or is your
+  report describing expected behavior?"* Don't decide this yourself, and
+  don't skip asking just because the evidence looks strong.
+  - User says it's still a bug → `bash "$BL" pending clear`, proceed to a
+    normal repro, note the citation in the ledger under `## repro` (it may
+    matter for PATCH), and continue.
+  - User confirms it's expected → `bash "$BL" pending clear` then
+    `bash "$BL" set state NOT_A_BUG`, then see
+    `references/failure-modes.md` → `NOT_A_BUG` and stop. No LOCATE, no
+    PATCH.
 - **`UNREPRODUCED`** — 3 distinct attempts (different inputs/angles) never
   trigger the symptom. See `references/failure-modes.md` → `UNREPRODUCED`.
   Do not guess a fix for a bug you cannot trigger.
@@ -208,18 +238,40 @@ bash "$BL" set verify.baseline_diff "CLEAN" # or the new failures found
 
 FAIL → `bash "$BL" hypothesis refute <n>`, go back to HYPOTHESIZE with the
 failure as new evidence. **Do not patch again on top of a refuted
-hypothesis.** After 3 refuted hypotheses:
-`bash "$BL" set state ARCHITECTURE_QUESTION` and stop — ask the user. Do not
-attempt a 4th guess.
+hypothesis.** After 3 refuted hypotheses, record the question before asking
+it:
+```bash
+bash "$BL" pending ask "3 hypotheses refuted: <summarize each + evidence>. What am I missing?" "ARCHITECTURE_QUESTION"
+bash "$BL" set state ARCHITECTURE_QUESTION
+```
+Then stop and ask the user. Do not attempt a 4th guess.
 
 ```bash
 bash "$BL" gate REVIEW
 ```
 
-### REVIEW
-Spawn `caveman:cavecrew-reviewer` on the diff.
+### REVIEW — bounded-adversarial, not a rubber stamp
+Spawn `caveman:cavecrew-reviewer` on the diff, instructed to genuinely
+challenge it, not confirm it: does the patch address the hypothesis's
+actual root cause, does it stay inside LOCATE's blast radius, what edge
+case or regression did PATCH miss? A verdict of "approved" with nothing
+behind it fails the orchestrator-judgment check above just as much as any
+other thin field.
+
+**Rejected** → back to PATCH (the diagnosis wasn't wrong, the execution
+was) with the reviewer's specific objection as new evidence. Track the
+round:
 ```bash
-bash "$BL" set review.verdict "<verdict>"
+bash "$BL" set review.rejection_count "<n>"
+```
+**Cap at 2 rounds.** On the 3rd pass the reviewer must either approve, or
+approve-with-caveats (the caveats go in `review.verdict`, not silently
+dropped) — or, if it genuinely can't do either, that's a `pending ask`
+before asking the user directly, not a 4th round of review-revise
+ping-pong.
+
+```bash
+bash "$BL" set review.verdict "<verdict, including any caveats>"
 bash "$BL" gate LANDED
 ```
 
