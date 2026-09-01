@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bugloop.sh — state engine for the BugLoop workflow
-# Subcommands: init state set receipt baseline hypothesis switch pending gate resume nag list
+# Subcommands: init state set receipt baseline hypothesis switch pending gate resume nag list dashboard
 set -euo pipefail
 
 ROOT="${BUGLOOP_ROOT:-$HOME/.claude/bugloop}"
@@ -156,6 +156,7 @@ engine_version: ${engine_version}
 pending.question:
 pending.context:
 pending.asked_at:
+pending.answer:
 
 ## repro
 repro.test_path:
@@ -509,9 +510,12 @@ cmd_resume() {
   fi
   echo "bugloop: open ledger found — state=$state"
   echo "ledger: $ledger"
-  local pending
+  local pending answer
   pending="$(get_field "$ledger" pending.question)"
-  if [ -n "$pending" ]; then
+  answer="$(get_field "$ledger" pending.answer)"
+  if [ -n "$pending" ] && [ -n "$answer" ]; then
+    echo "ANSWERED, NOT YET ACTED ON: \"$pending\" -> \"$answer\""
+  elif [ -n "$pending" ]; then
     echo "UNANSWERED QUESTION: $pending"
   fi
   echo "--- summary ---"
@@ -529,13 +533,37 @@ cmd_nag() {
   [ -z "$ledger" ] || [ ! -f "$ledger" ] && exit 0
   local state
   state="$(grep -m1 '^state:' "$ledger" | sed 's/^state: *//')"
+
+  # Tier 1: truly done, no exceptions. A closed bug never nags again, even
+  # if a pending.* field was somehow left stale (e.g. an orchestrator that
+  # slipped straight to `set state NOT_A_BUG` without going through
+  # `pending clear` first -- a documentation-discipline gap, not something
+  # the engine enforces, so this stays defensive).
   case "$state" in
-    LANDED|NOT_A_BUG|BLOCKED_NEEDS_HUMAN|ARCHITECTURE_QUESTION|"")
+    LANDED|NOT_A_BUG|"")
+      exit 0
+      ;;
+  esac
+
+  # Tier 2: an answered-but-unacted question is always worth surfacing for
+  # any state that reaches here -- including BLOCKED_NEEDS_HUMAN and
+  # ARCHITECTURE_QUESTION, which are themselves pending-question triggers,
+  # so an answer arriving for THEIR question is exactly what should break
+  # tier 3's silence for them below.
+  local pending answer
+  pending="$(get_field "$ledger" pending.question)"
+  answer="$(get_field "$ledger" pending.answer)"
+  if [ -n "$pending" ] && [ -n "$answer" ]; then
+    echo "bugloop: answered, not yet acted on (state=$state) — \"$pending\" -> \"$answer\""
+    return 0
+  fi
+
+  # Tier 3: paused, waiting on a human, but nothing new to report yet.
+  case "$state" in
+    BLOCKED_NEEDS_HUMAN|ARCHITECTURE_QUESTION)
       exit 0
       ;;
     *)
-      local pending
-      pending="$(get_field "$ledger" pending.question)"
       if [ -n "$pending" ]; then
         echo "bugloop: unanswered question (state=$state) — $pending"
       else
@@ -551,6 +579,43 @@ cmd_list() {
     exit 0
   fi
   find "$ROOT" -name '*.md' -maxdepth 2 2>/dev/null
+}
+
+cmd_dashboard() {
+  local port="${BUGLOOP_DASHBOARD_PORT:-4577}"
+  if [ "${1:-}" = "--port" ]; then
+    port="${2:-$port}"
+  elif [ -n "${1:-}" ]; then
+    port="$1"
+  fi
+
+  # dashboard/ is a sibling of skills/ -- resolved relative to this
+  # script's own location (not .engine_root/cwd) so it always matches
+  # whichever install of bugloop is actually running this command.
+  local script_dir dash_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  dash_dir="$(cd "$script_dir/../../../dashboard" 2>/dev/null && pwd || true)"
+  if [ -z "$dash_dir" ] || [ ! -f "$dash_dir/server.js" ]; then
+    echo "bugloop: dashboard/ not found next to this engine (expected near $script_dir)" >&2
+    exit 1
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "bugloop: node is required to run the dashboard (not found on PATH)" >&2
+    exit 1
+  fi
+
+  if [ ! -d "$dash_dir/node_modules" ]; then
+    echo "bugloop: installing dashboard dependencies (first run only)..." >&2
+    if ! (cd "$dash_dir" && npm install --silent); then
+      echo "bugloop: npm install failed" >&2
+      exit 1
+    fi
+  fi
+
+  echo "bugloop: starting dashboard on port $port (Ctrl+C to stop)"
+  cd "$dash_dir"
+  BUGLOOP_DASHBOARD_PORT="$port" exec node server.js
 }
 
 cmd_switch() {
@@ -596,20 +661,41 @@ cmd_pending() {
         echo "usage: bugloop.sh pending ask \"<question>\" \"<context>\"" >&2
         exit 2
       fi
-      # cmd_set independently rejects multiline values for each field below
+      # cmd_set independently rejects multiline values for each field below.
+      # Reset pending.answer too -- a brand-new question can't already have
+      # a valid answer, so any value sitting there is necessarily stale
+      # (e.g. a session exited after the dashboard recorded an answer but
+      # before `pending clear` ran). Leaving it would attach an old answer
+      # to a new, unrelated question.
       cmd_set pending.question "$question" >/dev/null
       cmd_set pending.context "$context" >/dev/null
       cmd_set pending.asked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
+      cmd_set pending.answer "" >/dev/null
       echo "bugloop: pending question recorded"
       ;;
     clear)
       cmd_set pending.question "" >/dev/null
       cmd_set pending.context "" >/dev/null
       cmd_set pending.asked_at "" >/dev/null
+      cmd_set pending.answer "" >/dev/null
       echo "bugloop: pending question cleared"
       ;;
+    answer)
+      local answer="${1:-}"
+      if [ -z "$answer" ]; then
+        echo "usage: bugloop.sh pending answer \"<answer text>\"" >&2
+        exit 2
+      fi
+      # Records the answer only -- does NOT clear pending.question or act
+      # on it. That's deliberate: something not writing code (a human via
+      # the dashboard, a script) can record what was decided, but only the
+      # orchestrator actually driving the loop interprets it and clears the
+      # question once it has genuinely acted on the answer.
+      cmd_set pending.answer "$answer" >/dev/null
+      echo "bugloop: pending answer recorded (not yet cleared -- orchestrator must act on it)"
+      ;;
     *)
-      echo "usage: bugloop.sh pending ask|clear ..." >&2
+      echo "usage: bugloop.sh pending ask|answer|clear ..." >&2
       exit 2
       ;;
   esac
@@ -641,6 +727,7 @@ main() {
     resume) cmd_resume "$@" ;;
     nag) cmd_nag "$@" ;;
     list) cmd_list "$@" ;;
+    dashboard) cmd_dashboard "$@" ;;
     *)
       cat >&2 <<USAGE
 usage: bugloop.sh [--ledger <path>] <subcommand> [args]
@@ -653,11 +740,13 @@ usage: bugloop.sh [--ledger <path>] <subcommand> [args]
   hypothesis refute|confirm <n>      flip a hypothesis's status
   switch <id-or-partial-match>       repoint active.json at an existing ledger
   pending ask "<question>" "<context>"   record a durable pending question (all 3 fields, atomically)
-  pending clear                          clear it after the answer lands
+  pending answer "<text>"                record an answer (e.g. from the dashboard) without acting on it
+  pending clear                          clear all 4 pending fields after the answer has been acted on
   gate <target-state>     check required fields before transition
   resume                  print open-ledger summary (SessionStart hook)
   nag                     warn if ledger open and not terminal (Stop hook)
   list                    list all ledgers
+  dashboard [--port N]    start the local web dashboard (monitor + answer pending decisions)
 
   --ledger <path> (or BUGLOOP_LEDGER env var) targets any subcommand at a
   specific ledger directly, without touching active.json.

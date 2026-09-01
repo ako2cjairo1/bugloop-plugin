@@ -1,0 +1,17 @@
+{
+  "name": "bugloop-dashboard",
+  "version": "1.0.0",
+  "description": "Read-mostly local web dashboard for BugLoop: monitor bugs across projects and answer pending decisions. Never writes code, never runs tests, never drives the agent -- every mutation shells out to bugloop.sh.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "chokidar": "^3.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

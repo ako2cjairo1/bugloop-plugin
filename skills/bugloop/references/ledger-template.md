@@ -38,10 +38,16 @@ engine_version: <CLAUDE_PLUGIN_ROOT's cache-dir basename, or manual-install>
 pending.question:                  # verbatim text last asked, empty if none outstanding
 pending.context:                    # which trigger asked it (POSSIBLE_NOT_A_BUG, etc.)
 pending.asked_at:                   # ISO timestamp
-                                    # set by every human-in-the-loop point BEFORE asking,
-                                    # cleared right after the answer lands. `resume`/the
-                                    # Stop hook surface this automatically when non-empty —
-                                    # see references/gates.md's durable-question note.
+pending.answer:                     # recorded answer, NOT yet acted on -- see below
+                                    # `bugloop.sh pending ask/answer/clear` owns these four
+                                    # fields atomically. `ask` sets question+context+asked_at
+                                    # before asking; something that isn't the orchestrator
+                                    # itself (a human via the dashboard, a script) can record
+                                    # a decision with `pending answer` without acting on it;
+                                    # only `pending clear` (run by the orchestrator, after it
+                                    # has actually acted on the answer) wipes all four.
+                                    # `resume`/the Stop hook surface both states automatically
+                                    # — see references/gates.md's durable-question note.
 
 ## repro
 repro.test_path:                   # path to the failing test file

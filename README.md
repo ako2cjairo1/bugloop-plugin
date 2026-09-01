@@ -44,10 +44,26 @@ skill register.
 /bug "<describe the bug>"     # start or resume the loop
 /bug-status                   # show current state + what the next gate needs
 /bug-land                     # final gate: full-suite receipt, then commit
+/bug-dashboard                # start the web dashboard (see below)
 ```
 
 Or just describe a bug in conversation — the `bugloop` skill triggers
 automatically for anything beyond a trivial one-line fix.
+
+## Dashboard
+
+`bugloop.sh dashboard` (or `/bug-dashboard`) starts a local web UI —
+`http://localhost:4577` by default — that shows every bug across every
+project at a glance, and lets you answer a pending question or a commit
+decision from a browser instead of the terminal. It's a monitor+decide
+surface, not a replacement for the agent: **it never writes code, runs
+tests, or drives the loop itself** — Claude Code, in a terminal, is still
+what actually works the bug. Every write it makes shells out to
+`bugloop.sh`, the same engine the terminal uses, so there's one source of
+truth for ledger mutation either way.
+
+It needs `node` (18+) on PATH; installs its own two dependencies
+(`express`, `chokidar`) into `dashboard/node_modules` on first run.
 
 ## Data
 
@@ -60,6 +76,10 @@ touched by upgrades or reinstalls.
 - `skills/bugloop/` — SKILL.md (the state machine + gates), the `bugloop.sh`
   engine, and reference docs (`gates.md`, `ledger-template.md`,
   `failure-modes.md`)
-- `commands/` — `/bug`, `/bug-status`, `/bug-land`
+- `commands/` — `/bug`, `/bug-status`, `/bug-land`, `/bug-dashboard`
 - `agents/` — `bug-reproducer` (writes the failing test), `bug-verifier`
   (checks the fix independently, no write tools)
+- `dashboard/` — the local web UI: an Express + chokidar server
+  (`server.js`, `lib/`) and a vanilla-JS single-page frontend (`public/`).
+  Read-mostly; every write shells out to `bugloop.sh`, never writes a
+  ledger field directly.

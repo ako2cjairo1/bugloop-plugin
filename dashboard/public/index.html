@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BugLoop Dashboard</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <nav class="sidebar">
+      <div class="brand">bugloop<span class="dot">.</span>dash</div>
+      <div class="nav" id="nav">
+        <div class="nav-item" data-route="#/" id="nav-all">
+          <span>All Bugs</span>
+          <span class="count" id="count-all">0</span>
+        </div>
+        <div class="nav-item pending" data-route="#/pending" id="nav-pending">
+          <span>Pending Decisions</span>
+          <span class="count" id="count-pending">0</span>
+        </div>
+      </div>
+      <div class="sidebar-foot" id="root-path"></div>
+    </nav>
+    <main class="main" id="main">
+      <div class="loading">Loading…</div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

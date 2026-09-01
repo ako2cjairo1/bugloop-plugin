@@ -39,17 +39,34 @@ existing on disk is exactly the failure mode this skill exists to prevent.
 Every human-in-the-loop point (`POSSIBLE_NOT_A_BUG`, `UNREPRODUCED`,
 `ARCHITECTURE_QUESTION`, `BLOCKED_NEEDS_HUMAN`, `/bug-land`'s commit ask,
 an orchestrator-judgment concern) records the question in the ledger
-*before* asking it — `bugloop.sh pending ask "<question>" "<context>"` sets
-`pending.question`/`pending.context`/`pending.asked_at` together, always all
-three — and `bugloop.sh pending clear` right after. A question asked only
-inside a conversation turn
-and never written to disk is a question the next session — after `/clear`,
-a crash, a dropped connection — has no way to know was ever pending; it
-might silently re-decide, ask something differently worded, or just stall.
-`bugloop.sh resume` (SessionStart) and `nag` (Stop) both surface a non-empty
-`pending.question` automatically, so the terminal UX gets this for free —
-this is also the entire query behind a dashboard's "needs your decision"
-view: every ledger where `pending.question` isn't empty.
+*before* asking it. A question asked only inside a conversation turn and
+never written to disk is a question the next session — after `/clear`, a
+crash, a dropped connection — has no way to know was ever pending; it might
+silently re-decide, ask something differently worded, or just stall.
+
+Three subcommands own this as one lifecycle, `bugloop.sh pending ...`:
+
+- **`ask "<question>" "<context>"`** — sets `pending.question`,
+  `pending.context`, and `pending.asked_at` together, always all three,
+  right before the orchestrator asks the question (in conversation, or
+  wherever it's asking).
+- **`answer "<text>"`** — records a decision *without acting on it*. This
+  is what the dashboard calls when a human answers from the browser — it
+  can write down what was decided, but only the orchestrator, on its next
+  `resume`, actually interprets the answer and acts on it. `pending.answer`
+  stays separate from clearing the question specifically so "answered" and
+  "acted on" aren't conflated.
+- **`clear`** — wipes all four `pending.*` fields. Only called by the
+  orchestrator, only after it has genuinely acted on the answer (whether
+  that answer arrived in the same conversation turn or was recorded earlier
+  by something else).
+
+`bugloop.sh resume` (SessionStart) and `nag` (Stop) both surface this
+automatically — an unanswered question prints as `UNANSWERED QUESTION:
+...`, an answered-but-not-yet-acted-on one as `ANSWERED, NOT YET ACTED ON:
+... -> ...` — so the terminal UX gets this for free either way. This is
+also the entire query behind a dashboard's "needs your decision" view:
+every ledger where `pending.question` isn't empty.
 
 ## Targeting a specific ledger
 

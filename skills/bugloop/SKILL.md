@@ -72,6 +72,18 @@ was ever pending. `resume` and the Stop hook both surface `pending.question`
 automatically once it's set; don't skip this even when you're confident the
 answer is coming in the same turn.
 
+**On resume, check for an answer that arrived while you were away** — the
+dashboard (or a script) can record a decision with `bugloop.sh pending
+answer "<text>"` without acting on it; only you, the orchestrator, interpret
+it and clear it:
+```bash
+bash "$BL" resume   # prints "ANSWERED, NOT YET ACTED ON: ... -> ..." if so
+```
+Read `pending.answer`, act on it exactly as if the user had just replied in
+conversation (set the state, proceed, whatever the answer implies for that
+`pending.context`), then `bash "$BL" pending clear`. Never treat a recorded
+answer as self-executing — reading it and acting on it are still your job.
+
 | Trigger | What's asked | Where |
 |---|---|---|
 | `POSSIBLE_NOT_A_BUG` from the reproducer | The citation + "outdated, or expected behavior?" | REPRO, before any test is written |
