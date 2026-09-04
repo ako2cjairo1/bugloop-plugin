@@ -27,12 +27,27 @@
     });
   }
 
+  function fetchRuns() {
+    return fetch('/api/runs').then(function (r) { return r.json(); }).then(function (d) { return d.runs || []; });
+  }
+
+  function fetchProjects() {
+    return fetch('/api/projects').then(function (r) { return r.json(); }).then(function (d) { return d.projects || []; });
+  }
+
   function updateNavCounts() {
     document.getElementById('count-all').textContent = String(bugsCache.length);
     var pending = bugsCache.filter(function (b) { return b.pendingQuestion; });
     var countEl = document.getElementById('count-pending');
     countEl.textContent = String(pending.length);
     countEl.classList.toggle('has-pending', pending.length > 0);
+  }
+
+  function updateRunsCount() {
+    fetchRuns().then(function (runs) {
+      var running = runs.filter(function (r) { return r.status === 'running'; });
+      document.getElementById('count-runs').textContent = String(running.length);
+    }).catch(function () {});
   }
 
   // ---------- helpers ----------
@@ -53,6 +68,16 @@
       return 'state-blocked';
     }
     return 'state-active';
+  }
+
+  function isTerminalState(state) {
+    return state === 'LANDED' || EXIT_STATES.indexOf(state) !== -1;
+  }
+
+  function runStatusClass(status) {
+    if (status === 'completed') return 'state-landed';
+    if (status === 'running') return 'state-active';
+    return 'state-blocked'; // failed, stopped, timed-out
   }
 
   function relTime(iso) {
@@ -82,6 +107,10 @@
       renderDetail(decodeURIComponent(hash.slice('#/bug/'.length)));
     } else if (hash === '#/pending') {
       renderList(true);
+    } else if (hash === '#/new') {
+      renderNewBugForm();
+    } else if (hash === '#/runs') {
+      renderRuns();
     } else {
       renderList(false);
     }
@@ -90,6 +119,8 @@
   function setActiveNav(hash) {
     document.getElementById('nav-all').classList.toggle('active', hash === '#/');
     document.getElementById('nav-pending').classList.toggle('active', hash === '#/pending');
+    document.getElementById('nav-runs').classList.toggle('active', hash === '#/runs');
+    document.getElementById('nav-new').classList.toggle('active', hash === '#/new');
   }
 
   window.addEventListener('hashchange', navigate);
@@ -240,8 +271,12 @@
         '<span class="mono">' + esc(f.test_cmd || '') + '</span>' +
         '<span class="mono">engine ' + esc(f.engine_version || 'unknown') + '</span>' +
         '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
         '<span class="chip ' + stateChipClass(f.state) + '">' + esc(f.state) + '</span>' +
+        (isTerminalState(f.state) ? '' : '<button class="btn small" id="continue-btn">Continue in Claude Code</button>') +
         '</div>' +
+        '</div>' +
+        '<div id="continue-status"></div>' +
         renderStepper(f.state) +
         renderPendingBanner(bug) +
         '<div class="panel"><h3>Repro</h3><div class="panel-body">' +
@@ -266,8 +301,37 @@
 
       mainEl.innerHTML = html;
       wireAnswerForm(id);
+      wireContinueButton(f.project_dir);
     }).catch(function (err) {
       mainEl.innerHTML = '<a class="back-link" href="#/">← All Bugs</a><div class="error-box">Could not load this bug: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  function wireContinueButton(projectDir) {
+    var btn = document.getElementById('continue-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var statusEl = document.getElementById('continue-status');
+      btn.disabled = true;
+      statusEl.innerHTML = '';
+      fetch('/api/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectDir: projectDir }),
+      })
+        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res.ok) {
+            statusEl.innerHTML = '<div class="form-error">' + esc(res.data.error || 'Could not start.') + '</div>';
+            return;
+          }
+          location.hash = '#/runs';
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          statusEl.innerHTML = '<div class="form-error">' + esc(err.message) + '</div>';
+        });
     });
   }
 
@@ -311,15 +375,153 @@
     });
   }
 
+  // ---------- new bug ----------
+
+  function renderNewBugForm() {
+    mainEl.innerHTML = '<div class="loading">Loading…</div>';
+    fetchProjects().then(function (projects) {
+      var head =
+        '<div class="page-head"><div><h1>New Bug</h1>' +
+        '<div class="page-sub">Spawns a real, autonomous <code>claude -p</code> run — writes code, runs tests, can commit. ' +
+        'Never runs unattended past a decision point: it stops and records any pending question instead of guessing.</div>' +
+        '</div></div>';
+
+      if (projects.length === 0) {
+        mainEl.innerHTML = head +
+          '<div class="table-wrap"><div class="empty-state">' +
+          'No projects are allowed yet. From a terminal:<br><br>' +
+          '<code>bugloop.sh dashboard-allow /path/to/project</code>' +
+          '</div></div>';
+        return;
+      }
+
+      var options = projects.map(function (p) { return '<option value="' + esc(p) + '">' + esc(p) + '</option>'; }).join('');
+      mainEl.innerHTML = head +
+        '<div class="panel"><div class="panel-body">' +
+        '<form id="new-bug-form">' +
+        '<div class="kv-row"><span class="k">Project</span><span class="v">' +
+        '<select name="projectDir" required style="width:100%;padding:8px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink);">' +
+        options + '</select></span></div>' +
+        '<div style="margin-top:14px;"><textarea name="description" placeholder="Describe the bug…" required ' +
+        'style="width:100%;min-height:90px;padding:10px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-family:inherit;font-size:13.5px;"></textarea></div>' +
+        '<div class="kv-row" style="margin-top:10px;"><span class="k">Budget cap (USD)</span><span class="v">' +
+        '<input type="number" name="maxBudgetUsd" value="5" min="0.1" step="0.5" style="width:100px;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink);"></span></div>' +
+        '<button type="submit" class="btn primary" style="margin-top:14px;">Start</button>' +
+        '</form><div id="new-bug-status"></div>' +
+        '</div></div>';
+
+      document.getElementById('new-bug-form').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var form = ev.target;
+        var statusEl = document.getElementById('new-bug-status');
+        var btn = form.querySelector('button');
+        btn.disabled = true;
+        statusEl.innerHTML = '';
+        fetch('/api/runs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectDir: form.querySelector('[name="projectDir"]').value,
+            description: form.querySelector('[name="description"]').value,
+            maxBudgetUsd: Number(form.querySelector('[name="maxBudgetUsd"]').value),
+          }),
+        })
+          .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+          .then(function (res) {
+            btn.disabled = false;
+            if (!res.ok) {
+              statusEl.innerHTML = '<div class="form-error">' + esc(res.data.error || 'Could not start.') + '</div>';
+              return;
+            }
+            location.hash = '#/runs';
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            statusEl.innerHTML = '<div class="form-error">' + esc(err.message) + '</div>';
+          });
+      });
+    }).catch(function (err) {
+      mainEl.innerHTML = '<div class="error-box">Could not load projects: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  // ---------- live runs ----------
+
+  function runRelTime(ms) {
+    if (!ms) return '';
+    var mins = Math.round((Date.now() - ms) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    return Math.round(mins / 60) + 'h ago';
+  }
+
+  function renderRuns() {
+    mainEl.innerHTML = '<div class="loading">Loading…</div>';
+    fetchRuns().then(function (runs) {
+      var head = '<div class="page-head"><div><h1>Live Runs</h1><div class="page-sub">Sessions spawned from this dashboard. Bugloop progress itself is always on the ledger — this is just process status.</div></div></div>';
+
+      if (runs.length === 0) {
+        mainEl.innerHTML = head + '<div class="table-wrap"><div class="empty-state">No runs yet. Start one from <a href="#/new">New Bug</a>.</div></div>';
+        return;
+      }
+
+      var body = runs.map(function (r) {
+        var stopBtn = r.status === 'running' ? '<button class="btn small stop-run" data-id="' + esc(r.id) + '">Stop</button>' : '';
+        return (
+          '<div class="panel">' +
+          '<h3 style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<span>' + esc(r.description) + '</span>' +
+          '<span class="chip ' + runStatusClass(r.status) + '">' + esc(r.status) + '</span>' +
+          '</h3>' +
+          '<div class="panel-body">' +
+          kv('project', r.projectDir) +
+          kv('worktree', r.usedWorktree ? 'yes (isolated branch)' : 'no (not a git repo)') +
+          kv('started', runRelTime(r.startedAt)) +
+          (r.exitCode !== null ? kv('exit code', String(r.exitCode)) : '') +
+          '<details style="margin-top:10px;"><summary style="cursor:pointer;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--muted);">output</summary>' +
+          '<pre class="run-output" data-id="' + esc(r.id) + '" style="max-height:280px;overflow-y:auto;font-size:12px;margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;">loading…</pre></details>' +
+          stopBtn +
+          '</div></div>'
+        );
+      }).join('');
+
+      mainEl.innerHTML = head + body;
+
+      Array.prototype.forEach.call(mainEl.querySelectorAll('.run-output'), function (pre) {
+        pre.closest('details').addEventListener('toggle', function () {
+          if (!this.open) return;
+          fetch('/api/runs/' + pre.getAttribute('data-id') + '/output')
+            .then(function (r) { return r.json(); })
+            .then(function (d) { pre.textContent = d.output || '(no output yet)'; })
+            .catch(function (err) { pre.textContent = 'Could not load output: ' + err.message; });
+        });
+      });
+
+      Array.prototype.forEach.call(mainEl.querySelectorAll('.stop-run'), function (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          fetch('/api/runs/' + btn.getAttribute('data-id') + '/stop', { method: 'POST' })
+            .then(function () { renderRuns(); })
+            .catch(function () { btn.disabled = false; });
+        });
+      });
+    }).catch(function (err) {
+      mainEl.innerHTML = '<div class="error-box">Could not load runs: ' + esc(err.message) + '</div>';
+    });
+  }
+
   // ---------- live updates ----------
 
   function connectEvents() {
     var es = new EventSource('/api/events');
-    es.addEventListener('ledger-changed', function () {
+    var onAnyChange = function () {
       // Cheap and correct: re-run whatever's on screen right now against
       // fresh data, rather than trying to patch state in place.
       navigate();
-    });
+      updateRunsCount();
+    };
+    es.addEventListener('ledger-changed', onAnyChange);
+    es.addEventListener('run-changed', onAnyChange);
     es.onerror = function () {
       // EventSource auto-reconnects; nothing to do here beyond letting it.
     };
@@ -328,5 +530,6 @@
   // ---------- boot ----------
 
   navigate();
+  updateRunsCount();
   connectEvents();
 })();

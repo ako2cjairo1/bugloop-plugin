@@ -13,6 +13,7 @@ const chokidar = require('chokidar');
 const { parseLedger } = require('./lib/ledger-parser');
 const { BUGLOOP_ROOT, listLedgerPaths, activeLedgerFor } = require('./lib/ledger-scanner');
 const { runBugloop } = require('./lib/bugloop-cli');
+const sessionRunner = require('./lib/session-runner');
 
 const PORT = parseInt(process.env.BUGLOOP_DASHBOARD_PORT || process.argv[2] || '4577', 10);
 
@@ -155,6 +156,49 @@ app.post('/api/bugs/:id/answer', async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+  res.json({ ok: true });
+});
+
+// --- Spawning new bugs (opt-in; see session-runner.js for the full
+// rationale on -p vs --bg, and why this is a materially bigger risk
+// surface than the read/answer endpoints above). ---
+
+app.get('/api/projects', (req, res) => {
+  res.json({ projects: sessionRunner.listAllowedProjects() });
+});
+
+app.post('/api/runs', (req, res) => {
+  const { projectDir, description, maxBudgetUsd } = req.body || {};
+  if (typeof projectDir !== 'string' || !projectDir) {
+    return res.status(400).json({ error: 'projectDir required' });
+  }
+  let record;
+  try {
+    record = sessionRunner.spawnBugRun(
+      { projectDir, description, maxBudgetUsd: Number(maxBudgetUsd) },
+      (r) => broadcast('run-changed', { id: r.id, status: r.status })
+    );
+  } catch (err) {
+    const status = err.code === 'NOT_ALLOWED' ? 403 : err.code === 'CONCURRENCY_LIMIT' ? 429 : 500;
+    return res.status(status).json({ error: err.message });
+  }
+  broadcast('run-changed', { id: record.id, status: record.status });
+  res.status(201).json({ id: record.id, status: record.status });
+});
+
+app.get('/api/runs', (req, res) => {
+  res.json({ runs: sessionRunner.listRuns() });
+});
+
+app.get('/api/runs/:id/output', (req, res) => {
+  const out = sessionRunner.getRunOutput(req.params.id);
+  if (!out) return res.status(404).json({ error: 'run not found' });
+  res.json(out);
+});
+
+app.post('/api/runs/:id/stop', (req, res) => {
+  const stopped = sessionRunner.stopRun(req.params.id);
+  if (!stopped) return res.status(404).json({ error: 'run not found or not running' });
   res.json({ ok: true });
 });
 

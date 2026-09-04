@@ -53,17 +53,52 @@ automatically for anything beyond a trivial one-line fix.
 ## Dashboard
 
 `bugloop.sh dashboard` (or `/bug-dashboard`) starts a local web UI —
-`http://localhost:4577` by default — that shows every bug across every
-project at a glance, and lets you answer a pending question or a commit
-decision from a browser instead of the terminal. It's a monitor+decide
-surface, not a replacement for the agent: **it never writes code, runs
-tests, or drives the loop itself** — Claude Code, in a terminal, is still
-what actually works the bug. Every write it makes shells out to
-`bugloop.sh`, the same engine the terminal uses, so there's one source of
-truth for ledger mutation either way.
+`http://localhost:4577` by default, bound to loopback only — that shows
+every bug across every project at a glance, and lets you answer a pending
+question or a commit decision from a browser instead of the terminal.
+Every write it makes shells out to `bugloop.sh`, the same engine the
+terminal uses, so there's one source of truth for ledger mutation either
+way.
 
-It needs `node` (18+) on PATH; installs its own two dependencies
+It needs `node` (18+) on PATH; installs its own dependencies
 (`express`, `chokidar`) into `dashboard/node_modules` on first run.
+
+### New Bug / Continue — opt-in, and materially more powerful
+
+By default the dashboard is read-mostly: it monitors ledgers and lets you
+answer questions, nothing more. **New Bug** and **Continue** are a
+different kind of feature — they spawn a real, autonomous `claude -p`
+session that writes code, runs tests, and can commit, triggered from an
+unauthenticated local web page. That's a genuinely bigger risk surface
+than answering a text field, so it's off by default and stays scoped by an
+explicit allowlist:
+
+```bash
+bugloop.sh dashboard-allow /path/to/project      # terminal-only
+bugloop.sh dashboard-disallow /path/to/project   # revoke it
+```
+
+The dashboard **reads** `~/.claude/bugloop/dashboard-projects.txt` to
+populate the project picker; it never writes to that file itself, and
+re-validates the chosen project against a fresh read on every spawn
+request. If nothing is allowed yet, New Bug shows a disabled state
+explaining this command instead of silently offering nowhere to spawn.
+
+Every spawned run: uses `--permission-mode auto` and a per-run
+`--max-budget-usd` cap (default $5, overridable per run), runs in an
+isolated git worktree + branch when the target is a git repo (so it can
+never touch your actual working directory or uncommitted changes), and is
+capped at 3 concurrent runs by default. A hard timeout (20 min default)
+kills a run that doesn't finish. Slash commands like `/bug` don't resolve
+in headless mode — confirmed directly, not assumed — so spawned runs use
+`commands/bug.md`'s instructions inlined as the prompt instead; the result
+is identical either way.
+
+**Known limitation, stated plainly:** run tracking (status, output) lives
+in the dashboard server's memory and does not survive a restart. Actual
+bugloop progress is never at risk either way — the ledger, not this
+tracker, is the source of truth — but a restart loses the live-output view
+for anything that was running.
 
 ## Data
 
@@ -81,5 +116,7 @@ touched by upgrades or reinstalls.
   (checks the fix independently, no write tools)
 - `dashboard/` — the local web UI: an Express + chokidar server
   (`server.js`, `lib/`) and a vanilla-JS single-page frontend (`public/`).
-  Read-mostly; every write shells out to `bugloop.sh`, never writes a
-  ledger field directly.
+  `lib/bugloop-cli.js` shells out to `bugloop.sh` for every ledger write —
+  never writes a field directly. `lib/session-runner.js` is the opt-in New
+  Bug/Continue spawner (`dashboard-allow`-gated, `-p` not `--bg` — see its
+  header comment for why, confirmed by real testing not assumption).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bugloop.sh — state engine for the BugLoop workflow
-# Subcommands: init state set receipt baseline hypothesis switch pending gate resume nag list dashboard
+# Subcommands: init state set receipt baseline hypothesis switch pending gate resume nag list dashboard dashboard-allow dashboard-disallow
 set -euo pipefail
 
 ROOT="${BUGLOOP_ROOT:-$HOME/.claude/bugloop}"
@@ -618,6 +618,54 @@ cmd_dashboard() {
   BUGLOOP_DASHBOARD_PORT="$port" exec node server.js
 }
 
+# The dashboard's "spawn a new bug" feature reads this allowlist to decide
+# which directories it may run an autonomous session in -- it never writes
+# to this file itself. Only a terminal (a human) can expand what the web
+# UI is allowed to touch. See dashboard/lib/session-runner.js.
+cmd_dashboard_allow() {
+  local path="${1:-}"
+  if [ -z "$path" ]; then
+    echo "usage: bugloop.sh dashboard-allow <path>" >&2
+    exit 2
+  fi
+  local abs
+  abs="$(cd "$path" 2>/dev/null && pwd || true)"
+  if [ -z "$abs" ]; then
+    echo "bugloop: not a directory: $path" >&2
+    exit 1
+  fi
+  mkdir -p "$ROOT"
+  local list="$ROOT/dashboard-projects.txt"
+  touch "$list"
+  if grep -qxF "$abs" "$list" 2>/dev/null; then
+    echo "bugloop: already allowed: $abs"
+    return 0
+  fi
+  echo "$abs" >> "$list"
+  echo "bugloop: dashboard may now spawn bugs in: $abs"
+}
+
+cmd_dashboard_disallow() {
+  local path="${1:-}"
+  if [ -z "$path" ]; then
+    echo "usage: bugloop.sh dashboard-disallow <path>" >&2
+    exit 2
+  fi
+  local abs
+  abs="$(cd "$path" 2>/dev/null && pwd || true)"
+  [ -z "$abs" ] && abs="$path"
+  local list="$ROOT/dashboard-projects.txt"
+  if [ ! -f "$list" ]; then
+    echo "bugloop: no allowlist yet"
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  grep -vxF "$abs" "$list" > "$tmp" || true
+  mv "$tmp" "$list"
+  echo "bugloop: removed (if present): $abs"
+}
+
 cmd_switch() {
   local query="${1:-}"
   if [ -z "$query" ]; then
@@ -728,6 +776,8 @@ main() {
     nag) cmd_nag "$@" ;;
     list) cmd_list "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
+    dashboard-allow) cmd_dashboard_allow "$@" ;;
+    dashboard-disallow) cmd_dashboard_disallow "$@" ;;
     *)
       cat >&2 <<USAGE
 usage: bugloop.sh [--ledger <path>] <subcommand> [args]
@@ -747,6 +797,8 @@ usage: bugloop.sh [--ledger <path>] <subcommand> [args]
   nag                     warn if ledger open and not terminal (Stop hook)
   list                    list all ledgers
   dashboard [--port N]    start the local web dashboard (monitor + answer pending decisions)
+  dashboard-allow <path>    let the dashboard spawn new bugs in <path> (terminal-only)
+  dashboard-disallow <path> revoke that
 
   --ledger <path> (or BUGLOOP_LEDGER env var) targets any subcommand at a
   specific ledger directly, without touching active.json.
